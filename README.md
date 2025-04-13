@@ -1,116 +1,164 @@
-# Oracle System PoC
+# Cryptocurrency Oracle System
 
-This is a Proof of Concept (PoC) implementation of a decentralized oracle system that demonstrates the following key features:
+A robust and modular cryptocurrency price oracle system that aggregates prices from multiple sources including centralized exchanges (CEX) and decentralized exchanges (DEX).
 
-1. Multi-source price aggregation
-2. Median price calculation with confidence scoring
-3. Smart contract integration
-4. REST API endpoint
-5. Concurrent data fetching
+## Project Structure
+
+```
+.
+├── api/                    # REST API server implementation
+│   └── server.go          # Main API server with price endpoints
+├── config/                # Configuration files
+│   ├── base/             # Base configurations
+│   │   └── chains.json   # Blockchain network configurations
+│   ├── pairs/            # Trading pair configurations
+│   │   └── pairs.json    # Price pair settings and sources
+│   └── assets/           # Asset-specific configurations
+├── oracle/               # Core oracle implementation
+│   ├── common/          # Shared types and utilities
+│   ├── sources/         # Price source implementations
+│   │   └── crypto/      # Cryptocurrency price sources
+│   └── aggregator/      # Price aggregation logic
+├── web/                 # Frontend applications
+│   └── dashboard/       # React-based admin dashboard
+│       ├── public/      # Static assets
+│       └── src/         # React source code
+│           ├── components/  # React components
+│           └── config.js    # Frontend configuration
+├── contracts/           # Smart contract implementations
+├── cmd/                 # Command-line tools
+└── go.mod              # Go module definition
+```
 
 ## Components
 
-### 1. Smart Contract (`contracts/ModernOracle.sol`)
-- Modern Solidity implementation (^0.8.19)
-- Multiple data source support
-- Confidence scoring
-- Median calculation
-- Pausable functionality
-- Owner controls
+### API Server (`api/`)
+- REST API server built with Go and Gorilla Mux
+- Endpoints:
+  - `GET /api/v1/prices/{symbol}`: Get current price for a trading pair
+  - `GET /api/v1/health`: Health check endpoint
+- Features:
+  - CORS support for cross-origin requests
+  - Configurable port (default: 8080)
+  - Error handling and logging
 
-### 2. Price Aggregator (`oracle/aggregator.go`)
-- Concurrent price fetching from multiple sources
-- Configurable data sources
-- Custom parser support for different APIs
-- Thread-safe operations
-- Median price calculation
+### Configuration (`config/`)
+- Modular configuration system with JSON files
+- `base/chains.json`: Blockchain network configurations
+  - Network IDs, RPC endpoints, native currencies
+- `pairs/pairs.json`: Trading pair configurations
+  - Supported trading pairs (e.g., BTCUSDT, ETHUSDT)
+  - Price source settings
+  - Update frequency and minimum source requirements
+- `assets/`: Asset-specific configurations
 
-### 3. API Server (`api/server.go`)
-- RESTful endpoint for price queries
-- JSON response format
-- Error handling
-- Real-time price updates
+### Oracle Core (`oracle/`)
+- `common/`: Shared types and utilities
+  - Price point structures
+  - Configuration types
+  - Common interfaces
+- `sources/crypto/`: Cryptocurrency price sources
+  - Support for multiple exchanges:
+    - Binance
+    - Coinbase
+    - Kraken
+  - Configurable weights for each source
+- `aggregator/`: Price aggregation logic
+  - Median price calculation
+  - Source validation
+  - Error handling
+
+### Web Dashboard (`web/dashboard/`)
+- React-based admin interface
+- Features:
+  - Real-time price monitoring
+  - Price history visualization
+  - Source health monitoring
+- Components:
+  - PriceTable: Displays current prices
+  - Configuration management
+  - Error reporting
+
+### Smart Contracts (`contracts/`)
+- Smart contract implementations
+- Hardhat configuration for deployment
+
+## Configuration
+
+### Trading Pairs
+Supported trading pairs are configured in `config/pairs/pairs.json`:
+- BTCUSDT (Bitcoin/USDT)
+- ETHUSDT (Ethereum/USDT)
+- BNBUSDT (Binance Coin/USDT)
+- XRPUSDT (Ripple/USDT)
+- ADAUSDT (Cardano/USDT)
+
+Each pair configuration includes:
+- Base and quote currencies
+- Minimum required sources
+- Update frequency
+- Enabled exchanges
+- Source weights
 
 ## Getting Started
 
-### Prerequisites
-- Go 1.16+
-- Node.js 14+
-- Solidity 0.8.19+
-
-### Installation
-1. Clone the repository
-2. Install dependencies:
+1. Install dependencies:
    ```bash
-   go mod init oracle-poc
-   go mod tidy
-   npm install @openzeppelin/contracts
+   go mod download  # Backend dependencies
+   cd web/dashboard && npm install  # Frontend dependencies
    ```
 
-### Running the PoC
-1. Start the API server:
+2. Start the API server:
    ```bash
    cd api
    go run server.go
    ```
 
-2. Query prices:
+3. Start the web dashboard:
    ```bash
-   curl "http://localhost:8080/price?symbol=BTCUSDT"
+   cd web/dashboard
+   npm start
    ```
 
-### Smart Contract Deployment
-1. Deploy using Hardhat or Truffle
-2. Configure data sources
-3. Start submitting price updates
+## API Endpoints
 
-## Architecture
-
+### Get Price
 ```
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│  Exchange 1  │    │  Exchange 2  │    │  Exchange N  │
-└──────┬───────┘    └──────┬───────┘    └──────┬───────┘
-       │                   │                    │
-       └───────────┬───────┴──────────┬────────┘
-                   │                  │
-            ┌──────▼──────┐    ┌──────▼──────┐
-            │ Aggregator  │    │   Oracle    │
-            │  (Go)      │    │  Contract   │
-            └──────┬──────┘    └──────┬──────┘
-                   │                  │
-            ┌──────▼──────┐    ┌──────▼──────┐
-            │ REST API    │    │    DApps    │
-            └─────────────┘    └─────────────┘
+GET /api/v1/prices/{symbol}
+```
+Returns current price information for the specified trading pair.
+
+Response:
+```json
+{
+  "symbol": "BTCUSDT",
+  "price": 50000.00,
+  "volume": 1000.50,
+  "timestamp": "2024-04-13T10:30:00Z"
+}
 ```
 
-## Future Improvements
+### Health Check
+```
+GET /api/v1/health
+```
+Returns server health status.
 
-1. Add more data sources
-2. Implement WebSocket support for real-time updates
-3. Add authentication for API endpoints
-4. Implement caching layer
-5. Add more sophisticated aggregation methods
-6. Implement historical price storage
-7. Add monitoring and alerting
-8. Implement rate limiting
-9. Add support for more asset types
-10. Implement automated tests
+Response:
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-04-13T10:30:00Z"
+}
+```
 
-## Security Considerations
+## Development
 
-- API rate limiting
-- Input validation
-- Error handling
-- Access control
-- Data validation
-- Smart contract security
-- Network security
-- Data source reliability
-
-## Contributing
-
-Feel free to submit issues and enhancement requests.
+- Backend: Go 1.21+
+- Frontend: Node.js 18+, React
+- Configuration: JSON
+- Smart Contracts: Solidity, Hardhat
 
 ## License
 
-MIT 
+[Add your license information here] 
