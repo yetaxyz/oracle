@@ -1,0 +1,97 @@
+{
+    "chain": {
+        "id": "1",
+        "name": "Ethereum",
+        "nativeCurrency": "ETH",
+        "rpcUrls": ["https://eth.llamarpc.com"],
+        "blockExplorerUrls": ["https://etherscan.io"]
+    },
+    "assets": [
+        {
+            "symbol": "ETH",
+            "name": "Ethereum",
+            "type": "native",
+            "decimals": 18,
+            "pairs": [
+                {
+                    "symbol": "ETHUSDT",
+                    "baseCurrency": "ETH",
+                    "quoteCurrency": "USDT",
+                    "exchanges": ["Binance", "Coinbase", "Kraken"],
+                    "minimumSources": 2,
+                    "updateFrequencySeconds": 5,
+                    "sources": {
+                        "cex": {
+                            "enabled": true,
+                            "weight": 1.0
+                        },
+                        "dex": {
+                            "enabled": true,
+                            "weight": 0.8,
+                            "sources": [
+                                {
+                                    "name": "Uniswap V3",
+                                    "type": "subgraph",
+                                    "endpoint": "https://gateway.thegraph.com/api/subgraphs/id/5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
+                                    "poolAddress": "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8"
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "symbol": "USDC",
+            "name": "USD Coin",
+            "type": "erc20",
+            "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "decimals": 6,
+            "pairs": [
+                {
+                    "symbol": "USDCUSDT",
+                    "baseCurrency": "USDC",
+                    "quoteCurrency": "USDT",
+                    "exchanges": ["Binance", "Coinbase"],
+                    "minimumSources": 2,
+                    "updateFrequencySeconds": 5,
+                    "sources": {
+                        "cex": {
+                            "enabled": true,
+                            "weight": 1.0
+                        },
+                        "dex": {
+                            "enabled": true,
+                            "weight": 0.8,
+                            "sources": [
+                                {
+                                    "name": "Uniswap V3",
+                                    "type": "subgraph",
+                                    "endpoint": "https://gateway.thegraph.com/api/subgraphs/id/5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
+                                    "poolAddress": "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8"
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        }
+    ],
+    "exchanges": [
+        {
+            "name": "Binance",
+            "baseURL": "https://api.binance.com/api/v3",
+            "requiresKey": true
+        },
+        {
+            "name": "Coinbase",
+            "baseURL": "https://api.coinbase.com/v2",
+            "requiresKey": false
+        },
+        {
+            "name": "Kraken",
+            "baseURL": "https://api.kraken.com/0/public",
+            "requiresKey": false
+        }
+    ]
+} 

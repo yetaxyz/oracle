@@ -1,0 +1,69 @@
+{
+    "pairs": {
+        "BTCUSDT": {
+            "baseCurrency": "BTC",
+            "quoteCurrency": "USDT",
+            "minimumSources": 2,
+            "updateFrequencySeconds": 5,
+            "sources": {
+                "cex": {
+                    "enabled": true,
+                    "weight": 1.0,
+                    "exchanges": ["binance", "coinbase", "kraken"]
+                }
+            }
+        },
+        "ETHUSDT": {
+            "baseCurrency": "ETH",
+            "quoteCurrency": "USDT",
+            "minimumSources": 2,
+            "updateFrequencySeconds": 5,
+            "sources": {
+                "cex": {
+                    "enabled": true,
+                    "weight": 1.0,
+                    "exchanges": ["binance", "coinbase", "kraken"]
+                }
+            }
+        },
+        "BNBUSDT": {
+            "baseCurrency": "BNB",
+            "quoteCurrency": "USDT",
+            "minimumSources": 1,
+            "updateFrequencySeconds": 5,
+            "sources": {
+                "cex": {
+                    "enabled": true,
+                    "weight": 1.0,
+                    "exchanges": ["binance"]
+                }
+            }
+        },
+        "XRPUSDT": {
+            "baseCurrency": "XRP",
+            "quoteCurrency": "USDT",
+            "minimumSources": 2,
+            "updateFrequencySeconds": 5,
+            "sources": {
+                "cex": {
+                    "enabled": true,
+                    "weight": 1.0,
+                    "exchanges": ["binance", "kraken"]
+                }
+            }
+        },
+        "ADAUSDT": {
+            "baseCurrency": "ADA",
+            "quoteCurrency": "USDT",
+            "minimumSources": 2,
+            "updateFrequencySeconds": 5,
+            "sources": {
+                "cex": {
+                    "enabled": true,
+                    "weight": 1.0,
+                    "exchanges": ["binance", "kraken"]
+                }
+            }
+        }
+    }
+} 

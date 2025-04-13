@@ -1,0 +1,74 @@
+{
+    "exchanges": {
+        "cex": {
+            "binance": {
+                "name": "Binance",
+                "baseURL": "https://api.binance.com/api/v3",
+                "requiresKey": false,
+                "rateLimit": 1200,
+                "timeout": 5000
+            },
+            "coinbase": {
+                "name": "Coinbase",
+                "baseURL": "https://api.coinbase.com/v2",
+                "requiresKey": false,
+                "rateLimit": 1000,
+                "timeout": 5000
+            },
+            "kraken": {
+                "name": "Kraken",
+                "baseURL": "https://api.kraken.com/0/public",
+                "requiresKey": false,
+                "rateLimit": 1000,
+                "timeout": 5000
+            }
+        },
+        "dex": {
+            "uniswap_v3": {
+                "name": "Uniswap V3",
+                "type": "subgraph",
+                "endpoint": "https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3",
+                "requiresKey": false,
+                "minLiquidity": 1000000,
+                "timeout": 5000
+            }
+        }
+    },
+    "chains": {
+        "1": {
+            "id": "1",
+            "name": "Ethereum",
+            "nativeCurrency": "ETH",
+            "decimals": 18,
+            "rpcUrls": [
+                "https://eth.llamarpc.com"
+            ],
+            "blockExplorerUrls": [
+                "https://etherscan.io"
+            ],
+            "type": "mainnet"
+        }
+    },
+    "assets": {
+        "BTC": {
+            "name": "Bitcoin",
+            "decimals": 8,
+            "type": "native"
+        },
+        "ETH": {
+            "name": "Ethereum",
+            "decimals": 18,
+            "type": "native"
+        },
+        "USDT": {
+            "name": "Tether",
+            "decimals": 6,
+            "type": "token",
+            "chains": {
+                "1": {
+                    "address": "0xdac17f958d2ee523a2206206994597c13d831ec7"
+                }
+            }
+        }
+    }
+} 

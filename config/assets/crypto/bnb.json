@@ -1,0 +1,52 @@
+{
+    "chain": {
+        "id": "56",
+        "name": "BNB Chain",
+        "nativeCurrency": "BNB",
+        "rpcUrls": ["https://bsc-dataseed.binance.org"],
+        "blockExplorerUrls": ["https://bscscan.com"]
+    },
+    "assets": [
+        {
+            "symbol": "BNB",
+            "name": "BNB",
+            "type": "native",
+            "decimals": 18,
+            "pairs": [
+                {
+                    "symbol": "BNBUSDT",
+                    "baseCurrency": "BNB",
+                    "quoteCurrency": "USDT",
+                    "exchanges": ["Binance"],
+                    "minimumSources": 1,
+                    "updateFrequencySeconds": 5,
+                    "sources": {
+                        "cex": {
+                            "enabled": true,
+                            "weight": 1.0
+                        },
+                        "dex": {
+                            "enabled": true,
+                            "weight": 0.8,
+                            "sources": [
+                                {
+                                    "name": "PancakeSwap V3",
+                                    "type": "subgraph",
+                                    "endpoint": "https://api.thegraph.com/subgraphs/name/pancakeswap/exchange-v3-bsc",
+                                    "poolAddress": "0x85FAac652b707FDf6907EF726751087DE6b96936"
+                                }
+                            ]
+                        }
+                    }
+                }
+            ]
+        }
+    ],
+    "exchanges": [
+        {
+            "name": "Binance",
+            "baseURL": "https://api.binance.com/api/v3",
+            "requiresKey": true
+        }
+    ]
+} 
