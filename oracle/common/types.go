@@ -90,9 +90,17 @@ type CEXSourceConfig struct {
 
 // DEXSourceConfig represents DEX-specific configuration for a pair
 type DEXSourceConfig struct {
-    Enabled   bool                    `json:"enabled"`
-    Weight    float64                 `json:"weight"`
-    Exchanges map[string][]string    `json:"exchanges"` // chain -> DEX list
+    Enabled   bool             `json:"enabled"`
+    Weight    float64          `json:"weight"`
+    Sources   []DEXSource      `json:"sources"`
+}
+
+// DEXSource represents a single DEX source configuration
+type DEXSource struct {
+    Name        string `json:"name"`
+    Type        string `json:"type"`
+    Endpoint    string `json:"endpoint"`
+    PoolAddress string `json:"poolAddress"`
 }
 
 // PricePoint represents a price data point from any source

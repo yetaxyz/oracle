@@ -23,6 +23,18 @@
                     "enabled": true,
                     "weight": 1.0,
                     "exchanges": ["binance", "coinbase", "kraken"]
+                },
+                "dex": {
+                    "enabled": true,
+                    "weight": 0.8,
+                    "sources": [
+                        {
+                            "name": "uniswap_v3",
+                            "type": "subgraph",
+                            "endpoint": "https://gateway.thegraph.com/api/subgraphs/id/5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
+                            "poolAddress": "0x4e68ccd3e89f51c3074ca5072bbac773960dfa36"
+                        }
+                    ]
                 }
             }
         },
