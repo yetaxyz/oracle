@@ -6,7 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
+	// "path/filepath" // Removed unused import
+	"regexp"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -14,6 +15,29 @@ import (
 	"yetaXYZ/oracle/common"
 	"yetaXYZ/oracle/sources/crypto"
 )
+
+// ApiError defines the structure for standard JSON error responses
+type ApiError struct {
+	Code    string `json:"code"`    // e.g., "INVALID_INPUT", "INTERNAL_ERROR"
+	Message string `json:"message"` // User-friendly error message
+}
+
+// Define error codes
+const (
+	ErrCodeInvalidSymbol   = "INVALID_SYMBOL"
+	ErrCodePriceFetchFailed = "PRICE_FETCH_FAILED"
+	ErrCodeInternalError    = "INTERNAL_ERROR"
+)
+
+// writeJsonError is a helper to write standardized JSON errors
+func writeJsonError(w http.ResponseWriter, statusCode int, errCode string, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(map[string]ApiError{"error": {Code: errCode, Message: message}})
+}
+
+// Regex for basic symbol validation (e.g., 3-12 uppercase letters)
+var symbolRegex = regexp.MustCompile(`^[A-Z]{3,12}$`)
 
 // Server represents the API server
 type Server struct {
@@ -24,15 +48,16 @@ type Server struct {
 
 // NewServer creates a new API server
 func NewServer() (*Server, error) {
-	// Load configuration
-	configDir := filepath.Join("..", "config")
+	// Load configuration (relative to workspace root where command is run)
+	// configDir := filepath.Join("..", "config") // Old path relative to api/
+	configDir := "config" // Path relative to workspace root
 	if err := crypto.LoadConfig(configDir); err != nil {
-		return nil, fmt.Errorf("failed to load config: %v", err)
+		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
 	// Validate configuration
 	if err := crypto.ValidateConfig(); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %v", err)
+		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	// Create aggregator
@@ -60,20 +85,38 @@ func (s *Server) handleGetPrice() http.HandlerFunc {
 		vars := mux.Vars(r)
 		symbol := vars["symbol"]
 
-		// Fetch price using the original symbol format
+		// --- Input Validation ---
+		if !symbolRegex.MatchString(symbol) {
+			writeJsonError(w, http.StatusBadRequest, ErrCodeInvalidSymbol,
+				fmt.Sprintf("Invalid symbol format: '%s'. Expected 3-12 uppercase letters.", symbol))
+			return
+		}
+		// TODO: Add validation against actual list of supported symbols from config
+
+		// Fetch price using the validated symbol
 		price, err := s.aggregator.FetchPrice(symbol)
 		if err != nil {
 			log.Printf("Error fetching price for %s: %v", symbol, err)
-			http.Error(w, fmt.Sprintf("failed to fetch price: %v", err), http.StatusInternalServerError)
+			// Use standardized JSON error response
+			writeJsonError(w, http.StatusInternalServerError, ErrCodePriceFetchFailed,
+				fmt.Sprintf("Failed to fetch price for symbol '%s'.", symbol))
+			// Note: Exposing internal error details (err.Error()) is generally discouraged in production.
 			return
 		}
 
-		// Return response
+		if price == nil { // Defensive check in case FetchPrice returns nil without error
+			log.Printf("FetchPrice returned nil price for %s without error", symbol)
+			writeJsonError(w, http.StatusInternalServerError, ErrCodeInternalError, "Received nil price internally.")
+			return
+		}
+
+		// Return successful response
 		response := map[string]interface{}{
 			"symbol":    symbol,
 			"price":     price.Price,
-			"volume":    price.Volume,
-			"timestamp": price.Timestamp,
+			"volume":    price.Volume,       // Include volume from aggregation
+			"source":    price.Source,       // Include source info (e.g., "aggregated_vol_weighted_median")
+			"timestamp": price.Timestamp.UTC().Format(time.RFC3339Nano), // Use standard ISO 8601 format
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -86,7 +129,7 @@ func (s *Server) handleHealth() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := map[string]interface{}{
 			"status":    "ok",
-			"timestamp": time.Now(),
+			"timestamp": time.Now().UTC().Format(time.RFC3339Nano), // Use standard ISO 8601 format
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -105,18 +148,18 @@ func main() {
 		port = "8080"
 	}
 
-	// Setup CORS
+	// Setup CORS (Consider making AllowedOrigins configurable for production)
 	c := cors.New(cors.Options{
-		AllowedOrigins: []string{"*"},  // Allow all origins
-		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders: []string{"*"},
-		Debug:         false,  // Disable debug mode to remove CORS logging
+		AllowedOrigins: []string{"*"}, // TODO: Restrict in production
+		AllowedMethods: []string{"GET", "OPTIONS"}, // Limit methods if applicable
+		AllowedHeaders: []string{"Content-Type", "Authorization"}, // Specify needed headers
+		AllowCredentials: true,
+		Debug:         false,
 	})
 
-	// Wrap router with CORS middleware
 	handler := c.Handler(server.router)
 
-	log.Printf("Server starting on port %s", port)
+	log.Printf("API Server starting on port %s", port)
 	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}

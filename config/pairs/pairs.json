@@ -1,78 +1,106 @@
 {
     "pairs": {
         "BTCUSDT": {
+            "symbol": "BTCUSDT",
             "baseCurrency": "BTC",
             "quoteCurrency": "USDT",
             "minimumSources": 2,
-            "updateFrequencySeconds": 5,
+            "maxPriceAgeSeconds": 60,
+            "iqrMultiplier": 1.5,
             "sources": {
                 "cex": {
                     "enabled": true,
-                    "weight": 1.0,
+                    "weights": {
+                        "binance": 0.4,
+                        "coinbase": 0.3,
+                        "kraken": 0.3
+                    },
                     "exchanges": ["binance", "coinbase", "kraken"]
                 }
             }
         },
         "ETHUSDT": {
+            "symbol": "ETHUSDT",
             "baseCurrency": "ETH",
             "quoteCurrency": "USDT",
             "minimumSources": 2,
-            "updateFrequencySeconds": 5,
+            "maxPriceAgeSeconds": 60,
+            "iqrMultiplier": 1.5,
             "sources": {
                 "cex": {
                     "enabled": true,
-                    "weight": 1.0,
+                    "weights": {
+                        "binance": 0.4,
+                        "coinbase": 0.3,
+                        "kraken": 0.3
+                    },
                     "exchanges": ["binance", "coinbase", "kraken"]
                 },
                 "dex": {
                     "enabled": true,
-                    "weight": 0.8,
+                    "weights": {
+                        "uniswap_v3": 1.0
+                    },
                     "sources": [
                         {
                             "name": "uniswap_v3",
                             "type": "subgraph",
-                            "endpoint": "https://gateway.thegraph.com/api/subgraphs/id/5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
-                            "poolAddress": "0x4e68ccd3e89f51c3074ca5072bbac773960dfa36"
+                            "endpoint": "https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3",
+                            "poolAddress": "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640"
                         }
                     ]
                 }
             }
         },
         "BNBUSDT": {
+            "symbol": "BNBUSDT",
             "baseCurrency": "BNB",
             "quoteCurrency": "USDT",
             "minimumSources": 1,
-            "updateFrequencySeconds": 5,
+            "maxPriceAgeSeconds": 60,
+            "iqrMultiplier": 1.5,
             "sources": {
                 "cex": {
                     "enabled": true,
-                    "weight": 1.0,
+                    "weights": {
+                        "binance": 1.0
+                    },
                     "exchanges": ["binance"]
                 }
             }
         },
         "XRPUSDT": {
+            "symbol": "XRPUSDT",
             "baseCurrency": "XRP",
             "quoteCurrency": "USDT",
             "minimumSources": 2,
-            "updateFrequencySeconds": 5,
+            "maxPriceAgeSeconds": 60,
+            "iqrMultiplier": 1.5,
             "sources": {
                 "cex": {
                     "enabled": true,
-                    "weight": 1.0,
+                    "weights": {
+                        "binance": 0.5,
+                        "kraken": 0.5
+                    },
                     "exchanges": ["binance", "kraken"]
                 }
             }
         },
         "ADAUSDT": {
+            "symbol": "ADAUSDT",
             "baseCurrency": "ADA",
             "quoteCurrency": "USDT",
             "minimumSources": 2,
-            "updateFrequencySeconds": 5,
+            "maxPriceAgeSeconds": 60,
+            "iqrMultiplier": 1.5,
             "sources": {
                 "cex": {
                     "enabled": true,
-                    "weight": 1.0,
+                    "weights": {
+                        "binance": 0.5,
+                        "kraken": 0.5
+                    },
                     "exchanges": ["binance", "kraken"]
                 }
             }

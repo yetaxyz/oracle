@@ -68,11 +68,13 @@ type ChainAssetInfo struct {
 
 // PairConfig represents trading pair configurations
 type PairConfig struct {
-    BaseCurrency           string         `json:"baseCurrency"`
-    QuoteCurrency         string         `json:"quoteCurrency"`
-    MinimumSources        int            `json:"minimumSources"`
-    UpdateFrequencySeconds int            `json:"updateFrequencySeconds"`
-    Sources              SourcesConfig   `json:"sources"`
+    Symbol                string        `json:"symbol"`
+    BaseCurrency          string        `json:"baseCurrency"`
+    QuoteCurrency         string        `json:"quoteCurrency"`
+    MinimumSources        int           `json:"minimumSources"`
+    MaxPriceAgeSeconds    int           `json:"maxPriceAgeSeconds"`
+    IQRMultiplier         float64       `json:"iqrMultiplier"`
+    Sources               SourcesConfig `json:"sources"`
 }
 
 // SourcesConfig represents available price sources for a pair
@@ -83,15 +85,15 @@ type SourcesConfig struct {
 
 // CEXSourceConfig represents CEX-specific configuration for a pair
 type CEXSourceConfig struct {
-    Enabled   bool     `json:"enabled"`
-    Weight    float64  `json:"weight"`
-    Exchanges []string `json:"exchanges"`
+    Enabled   bool                `json:"enabled"`
+    Weights   map[string]float64 `json:"weights"`
+    Exchanges []string            `json:"exchanges"`
 }
 
 // DEXSourceConfig represents DEX-specific configuration for a pair
 type DEXSourceConfig struct {
     Enabled   bool             `json:"enabled"`
-    Weight    float64          `json:"weight"`
+    Weights   map[string]float64 `json:"weights"`
     Sources   []DEXSource      `json:"sources"`
 }
 
@@ -101,11 +103,14 @@ type DEXSource struct {
     Type        string `json:"type"`
     Endpoint    string `json:"endpoint"`
     PoolAddress string `json:"poolAddress"`
+    ChainID     string `json:"chainId,omitempty"`
 }
 
 // PricePoint represents a price data point from any source
 type PricePoint struct {
+    Source    string    `json:"source,omitempty"`
     Price     float64   `json:"price"`
     Volume    float64   `json:"volume"`
     Timestamp time.Time `json:"timestamp"`
+    Weight    float64   `json:"-"`
 } 

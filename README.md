@@ -38,9 +38,11 @@ A robust and modular cryptocurrency price oracle system that aggregates prices f
   - `GET /api/v1/prices/{symbol}`: Get current price for a trading pair
   - `GET /api/v1/health`: Health check endpoint
 - Features:
-  - CORS support for cross-origin requests
+  - CORS support (`rs/cors`)
   - Configurable port (default: 8080)
-  - Error handling and logging
+  - **Input Validation:** Basic validation for `{symbol}` format.
+  - **Standardized JSON Errors:** Returns errors in a structured JSON format (`{"error":{"code":"...","message":"..."}}`).
+  - Structured Logging (`log/slog`) for internal errors.
 
 ### Configuration (`config/`)
 - Modular configuration system with JSON files
@@ -62,11 +64,16 @@ A robust and modular cryptocurrency price oracle system that aggregates prices f
     - Binance
     - Coinbase
     - Kraken
-  - Configurable weights for each source
+    - Uniswap V3 (via Subgraph)
+  - Configurable weights for each source (`config/pairs/pairs.json`)
 - `aggregator/`: Price aggregation logic
-  - Median price calculation
-  - Source validation
-  - Error handling
+  - **Robust Aggregation Pipeline:**
+    1.  **Staleness Filtering:** Removes price points older than the configured `MaxPriceAge`.
+    2.  **Outlier Rejection (IQR):** Calculates the first (Q1) and third (Q3) quartiles of the remaining prices. Removes prices outside the range `[Q1 - k*IQR, Q3 + k*IQR]`, where `IQR = Q3 - Q1` and `k` is the configured `IQRMultiplier`.
+    3.  **Volume-Enhanced Weighted Median Calculation:** Calculates a dynamic weight for each valid price point, incorporating its configured static weight and its reported volume relative to the total volume of the valid set. Sorts prices and finds the price \(p_{(j)}\) such that the sum of *dynamic weights* of prices up to \(p_{(j)}\) is at least 50% of the total dynamic weight.
+    4.  **Volume Aggregation:** Sums the volume from all sources that passed the filtering steps.
+  - Source validation (Minimum number of sources required after filtering)
+  - Error handling and structured logging
 
 ### Web Dashboard (`web/dashboard/`)
 - React-based admin interface
@@ -97,8 +104,9 @@ Each pair configuration includes:
 - Base and quote currencies
 - Minimum required sources
 - Update frequency
-- Enabled exchanges
-- Source weights
+- Enabled exchanges and DEX sources
+- Per-source weights (`weights` map)
+- Aggregation parameters (`maxPriceAgeSeconds`, `iqrMultiplier`)
 
 ## Getting Started
 
