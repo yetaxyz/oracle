@@ -1,0 +1,60 @@
+{
+  "ETHUSDC_Global": {
+    "baseAsset": "ETH",
+    "quoteAsset": "USDC",
+    "chainId": "global", 
+    "aggregation": {
+      "minimumSources": 2,
+      "maxPriceAgeSeconds": 60,
+      "iqrMultiplier": 1.5
+    },
+    "sources": [
+      "binance_cex",
+      "coinbase_cex",
+      "kraken_cex",
+      "the_graph_eth_bundle"
+    ],
+    "weights": {
+      "binance_cex": 0.3,
+      "coinbase_cex": 0.2,
+      "kraken_cex": 0.2,
+      "the_graph_eth_bundle": 0.3 
+    }
+  },
+  "BTCUSDT_Global": {
+    "baseAsset": "BTC",
+    "quoteAsset": "USDT",
+    "chainId": "global",
+    "aggregation": {
+      "minimumSources": 2,
+      "maxPriceAgeSeconds": 60,
+      "iqrMultiplier": 1.5
+    },
+    "sources": [
+      "binance_cex",
+      "coinbase_cex", 
+      "kraken_cex"
+    ],
+    "weights": {
+      "binance_cex": 0.4,
+      "coinbase_cex": 0.3,
+      "kraken_cex": 0.3
+    }
+  },
+  "SOLUSDC_Solana": {
+    "baseAsset": "SOL", 
+    "quoteAsset": "USDC", 
+    "chainId": "solana", 
+    "aggregation": {
+      "minimumSources": 1, 
+      "maxPriceAgeSeconds": 90, 
+      "iqrMultiplier": 2.0 
+    },
+    "sources": [
+      "raydium_solana"
+    ],
+    "weights": {
+      "raydium_solana": 1.0
+    }
+  }
+} 

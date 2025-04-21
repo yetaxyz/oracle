@@ -18,13 +18,14 @@ import (
 
 // CryptoAggregator handles cryptocurrency price aggregation
 type CryptoAggregator struct {
-    config *common.BaseConfig
     client *http.Client
     logger *slog.Logger
+    sourceDetailCache map[string][]*common.PricePoint // Cache key is now pairID (e.g., "ETHUSDC_Global")
+    cacheMutex        sync.RWMutex
 }
 
 // NewCryptoAggregator creates a new CryptoAggregator
-func NewCryptoAggregator(config *common.BaseConfig) *CryptoAggregator {
+func NewCryptoAggregator() *CryptoAggregator {
     logFilePath := "oracle/sources/crypto/aggregator_errors.log" // Define log file path
     logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 
@@ -46,155 +47,146 @@ func NewCryptoAggregator(config *common.BaseConfig) *CryptoAggregator {
     }
 
     return &CryptoAggregator{
-        config: config,
         client: &http.Client{
             Timeout: 10 * time.Second,
         },
-        logger: logger, // Assign the configured logger
+        logger: logger,
+        sourceDetailCache: make(map[string][]*common.PricePoint),
     }
 }
 
-// FetchPrice fetches the price for a given trading pair concurrently from all configured sources.
-func (a *CryptoAggregator) FetchPrice(symbol string) (*common.PricePoint, error) {
-    // Get pair configuration
-    pairConfig, err := GetPairConfig(symbol)
-    if err != nil {
-        return nil, fmt.Errorf("failed to get pair config for symbol %s: %w", symbol, err)
+// FetchPrice fetches the price for a given resolved pair configuration concurrently.
+func (a *CryptoAggregator) FetchPrice(resolvedCfg *common.ResolvedPairConfig) (*common.PricePoint, error) {
+    if resolvedCfg == nil {
+        return nil, fmt.Errorf("resolved config cannot be nil")
     }
+    pairID := resolvedCfg.PairID // Use the resolved Pair ID for logging and caching
 
-    // Initialize WaitGroup and channel for collecting results
     var wg sync.WaitGroup
-    // Estimate buffer size based on potential sources
-    numSources := len(pairConfig.Sources.CEX.Exchanges) + len(pairConfig.Sources.DEX.Sources)
+    numSources := len(resolvedCfg.ResolvedSources)
     resultsChan := make(chan *common.PricePoint, numSources)
 
-    // Fetch from enabled CEX sources concurrently
-    if pairConfig.Sources.CEX.Enabled {
-        for _, exchange := range pairConfig.Sources.CEX.Exchanges {
-            wg.Add(1)
-            go func(exchangeName string) { // Capture loop variable
-                defer wg.Done()
-                var price *common.PricePoint
-                var fetchErr error
+    // Fetch from configured sources concurrently
+    for _, resolvedSource := range resolvedCfg.ResolvedSources {
+        wg.Add(1)
+        go func(rs common.ResolvedSource) { // Capture resolved source
+            defer wg.Done()
+            var price *common.PricePoint
+            var fetchErr error
 
-                switch exchangeName {
-                case "binance":
-                    price, fetchErr = a.fetchBinancePrice(symbol)
-                case "coinbase":
-                    coinbaseSymbol := pairConfig.BaseCurrency + "-" + pairConfig.QuoteCurrency
-                    price, fetchErr = a.fetchCoinbasePrice(coinbaseSymbol)
-                case "kraken":
-                    krakenSymbol := symbol // Assuming symbol is okay, might need mapping
-                    price, fetchErr = a.fetchKrakenPrice(krakenSymbol)
+            // Base symbol for CEX APIs (usually needs specific format)
+            // This needs refinement - how do CEX fetchers know the exact pair string (e.g., BTCUSDT vs XBTUSDT)?
+            // We might need to pass base/quote symbols or generate the API pair string here based on source type.
+            // For now, using a simple concatenation - THIS WILL LIKELY BREAK for some CEXs/pairs.
+            apiPairSymbol := resolvedCfg.BaseAsset.Symbol + resolvedCfg.QuoteAsset.Symbol
+
+            switch rs.Details.Type {
+            case common.SourceTypeCEX:
+                switch rs.SourceID { // Route based on specific CEX source ID
+                case "binance_cex":
+                    price, fetchErr = a.fetchBinancePrice(rs.Details, apiPairSymbol)
+                case "coinbase_cex":
+                    // Coinbase needs format like BASE-QUOTE
+                    coinbaseSymbol := resolvedCfg.BaseAsset.Symbol + "-" + resolvedCfg.QuoteAsset.Symbol
+                    price, fetchErr = a.fetchCoinbasePrice(rs.Details, coinbaseSymbol)
+                case "kraken_cex":
+                    price, fetchErr = a.fetchKrakenPrice(rs.Details, apiPairSymbol)
                 default:
-                    a.logger.Warn("Unsupported CEX exchange configured", "exchange", exchangeName, "symbol", symbol)
-                    resultsChan <- nil // Send nil for unsupported types
-                    return             // Exit goroutine
+                    fetchErr = fmt.Errorf("unsupported CEX source ID: %s", rs.SourceID)
                 }
-
-                if fetchErr != nil {
-                    a.logger.Warn("Error fetching price from CEX",
-                        "exchange", exchangeName,
-                        "symbol", symbol,
-                        "error", fetchErr.Error())
-                    resultsChan <- nil // Send nil on error
-                    return             // Exit goroutine
-                }
-
-                if price != nil {
-                    // Assign per-source weight from config
-                    if weight, ok := pairConfig.Sources.CEX.Weights[exchangeName]; ok {
-                        price.Weight = weight
-                        resultsChan <- price // Send valid price point
+            case common.SourceTypeDEXSubgraph:
+                switch rs.Details.QueryMethod {
+                case "bundleEthPrice":
+                    // Check if the pair is actually ETH/USD(T/C)
+                    if resolvedCfg.BaseAsset.Symbol == "ETH" && strings.Contains(resolvedCfg.QuoteAsset.Symbol, "USD") {
+                        price, fetchErr = a.fetchTheGraphBundleEthPrice(rs.Details)
                     } else {
-                        a.logger.Warn("Weight configuration missing for CEX source", "exchange", exchangeName, "symbol", symbol)
-                        resultsChan <- nil // Send nil if weight is missing
+                        fetchErr = fmt.Errorf("bundleEthPrice method only valid for ETH/USD pairs, requested for %s", pairID)
                     }
-                } else {
-                    // Should not happen if fetchErr was nil, but handle defensively
-                    resultsChan <- nil
-                }
-            }(exchange) // Pass the exchange name to the goroutine
-        }
-    }
-
-    // Fetch from enabled DEX sources concurrently
-    if pairConfig.Sources.DEX.Enabled {
-        for _, source := range pairConfig.Sources.DEX.Sources {
-            wg.Add(1)
-            go func(sourceDetail common.DEXSource) { // Changed type here
-                defer wg.Done()
-                var price *common.PricePoint
-                var fetchErr error
-
-                switch sourceDetail.Name {
-                case "uniswap_v3":
-                    price, fetchErr = a.fetchUniswapV3Price(sourceDetail.Endpoint, sourceDetail.PoolAddress)
+                case "poolPrice":
+                    // Need the specific pool address for this pair - where does it come from?
+                    // Option 1: Add PoolAddress field to ResolvedSource (populated by GetResolvedPairConfig?)
+                    // Option 2: Add PoolAddress map to PairConfig keyed by source ID?
+                    // For now, assuming it might be in rs.Details.PoolAddress (requires update to Source struct and JSON)
+                    if rs.Details.PoolAddress == "" {
+                        fetchErr = fmt.Errorf("pool address missing for poolPrice query method on source %s", rs.SourceID)
+                    } else {
+                        price, fetchErr = a.fetchTheGraphPoolPrice(rs.Details, rs.Details.PoolAddress) // Pass details and pool
+                    }
                 default:
-                    a.logger.Warn("Unsupported DEX source configured", "source_name", sourceDetail.Name, "symbol", symbol)
+                    fetchErr = fmt.Errorf("unsupported dex_subgraph query method '%s' for source %s", rs.Details.QueryMethod, rs.SourceID)
+                }
+            case common.SourceTypeDEXRPC:
+                // Example: Solana fetcher needs specific market ID based on pair/source
+                if rs.SourceID == "raydium_solana" {
+                    // TODO: Implement fetchRaydiumPrice
+                    // Needs: RPC endpoint from Chain config, Market ID (from where? PairConfig extension?)
+                    fetchErr = fmt.Errorf("fetcher for %s not implemented", rs.SourceID)
+                } else {
+                    fetchErr = fmt.Errorf("unsupported dex_rpc source ID: %s", rs.SourceID)
+                }
+            default:
+                fetchErr = fmt.Errorf("unsupported source type '%s' for source %s", rs.Details.Type, rs.SourceID)
+            }
+
+            if fetchErr != nil {
+                a.logger.Warn("Error fetching price",
+                    "pairID", pairID,
+                    "sourceID", rs.SourceID,
+                    "error", fetchErr.Error())
+                resultsChan <- nil
+                return
+            }
+
+            if price != nil {
+                weight, ok := resolvedCfg.SourceWeights[rs.SourceID]
+                if !ok {
+                    a.logger.Warn("Weight configuration missing", "pairID", pairID, "sourceID", rs.SourceID)
                     resultsChan <- nil
                     return
                 }
-
-                if fetchErr != nil {
-                    a.logger.Warn("Error fetching price from DEX",
-                        "source_name", sourceDetail.Name,
-                        "symbol", symbol,
-                        "error", fetchErr.Error())
-                    resultsChan <- nil
-                    return
-                }
-
-                if price != nil {
-                    // Assign per-source weight from config
-                    dexSourceName := sourceDetail.Name
-                    if weight, ok := pairConfig.Sources.DEX.Weights[dexSourceName]; ok {
-                        price.Weight = weight
-                        resultsChan <- price
-                    } else {
-                        a.logger.Warn("Weight configuration missing for DEX source", "source_name", dexSourceName, "symbol", symbol)
-                        resultsChan <- nil
-                    }
-                } else {
-                    resultsChan <- nil
-                }
-            }(source) // Pass the source detail struct to the goroutine
-        }
+                price.Weight = weight
+                price.Source = rs.SourceID // Set source ID on price point
+                resultsChan <- price
+            } else {
+                // Should not happen if fetchErr is nil, but handle defensively
+                a.logger.Warn("Fetcher returned nil price without error", "pairID", pairID, "sourceID", rs.SourceID)
+                resultsChan <- nil
+            }
+        }(resolvedSource)
     }
 
-    // Goroutine to close the channel once all fetchers are done
     go func() {
         wg.Wait()
         close(resultsChan)
     }()
 
-    // Collect results from the channel
-    prices := make([]*common.PricePoint, 0, numSources) // Pre-allocate slice capacity
+    prices := make([]*common.PricePoint, 0, numSources)
     for priceResult := range resultsChan {
-        if priceResult != nil { // Only append valid, non-error results with weights
+        if priceResult != nil {
             prices = append(prices, priceResult)
         }
     }
 
-    // Check minimum sources after collecting all results
-    if len(prices) < pairConfig.MinimumSources {
-        return nil, fmt.Errorf("insufficient valid price sources after concurrent fetch for %s: got %d, need %d", symbol, len(prices), pairConfig.MinimumSources)
+    if len(prices) < resolvedCfg.AggregationParams.MinimumSources {
+        return nil, fmt.Errorf("insufficient valid price sources after concurrent fetch for %s: got %d, need %d", pairID, len(prices), resolvedCfg.AggregationParams.MinimumSources)
     }
 
-    // Calculate aggregate price using the collected prices
-    aggregatedPricePoint, err := a.calculateAggregatePrice(prices, pairConfig)
+    // Pass aggregation parameters and PairID for caching
+    aggregatedPricePoint, err := a.calculateAggregatePrice(prices, &resolvedCfg.AggregationParams, pairID)
     if err != nil {
-        // Log the aggregation error in addition to returning it
-        a.logger.Error("Failed to calculate aggregate price", "symbol", symbol, "error", err)
-        return nil, fmt.Errorf("aggregation failed for %s: %w", symbol, err)
+        a.logger.Error("Failed to calculate aggregate price", "pairID", pairID, "error", err)
+        return nil, fmt.Errorf("aggregation failed for %s: %w", pairID, err)
     }
 
     return aggregatedPricePoint, nil
 }
 
-// fetchBinancePrice fetches price from Binance
-func (a *CryptoAggregator) fetchBinancePrice(symbol string) (*common.PricePoint, error) {
-    url := fmt.Sprintf("https://api.binance.com/api/v3/ticker/24hr?symbol=%s", symbol)
+// --- Fetcher Functions --- 
+// Signatures updated to accept common.Source details
+
+func (a *CryptoAggregator) fetchBinancePrice(source *common.Source, apiPairSymbol string) (*common.PricePoint, error) {
+    url := fmt.Sprintf("%s/ticker/24hr?symbol=%s", source.BaseURL, apiPairSymbol)
     resp, err := a.client.Get(url)
     if err != nil {
         return nil, fmt.Errorf("binance request failed: %w", err)
@@ -239,9 +231,8 @@ func (a *CryptoAggregator) fetchBinancePrice(symbol string) (*common.PricePoint,
     }, nil
 }
 
-// fetchCoinbasePrice fetches price from Coinbase
-func (a *CryptoAggregator) fetchCoinbasePrice(symbol string) (*common.PricePoint, error) {
-    url := fmt.Sprintf("https://api.coinbase.com/v2/prices/%s/spot", symbol)
+func (a *CryptoAggregator) fetchCoinbasePrice(source *common.Source, apiPairSymbol string) (*common.PricePoint, error) {
+    url := fmt.Sprintf("%s/prices/%s/spot", source.BaseURL, apiPairSymbol)
     resp, err := a.client.Get(url)
     if err != nil {
         return nil, fmt.Errorf("coinbase request failed: %w", err)
@@ -276,16 +267,14 @@ func (a *CryptoAggregator) fetchCoinbasePrice(symbol string) (*common.PricePoint
     }, nil
 }
 
-// fetchKrakenPrice fetches price from Kraken
-func (a *CryptoAggregator) fetchKrakenPrice(symbol string) (*common.PricePoint, error) {
+func (a *CryptoAggregator) fetchKrakenPrice(source *common.Source, apiPairSymbol string) (*common.PricePoint, error) {
     // Map common symbols to Kraken specific pairs if needed
-    krakenPair := symbol
-    if strings.HasPrefix(symbol, "BTC") {
-        krakenPair = strings.Replace(symbol, "BTC", "XBT", 1)
-        // Add other mappings if necessary (e.g., DOGE -> XDG)
-        a.logger.Info("Mapping symbol for Kraken", "original", symbol, "kraken_pair", krakenPair)
+    krakenPair := apiPairSymbol
+    if strings.HasPrefix(apiPairSymbol, "BTC") {
+        krakenPair = strings.Replace(apiPairSymbol, "BTC", "XBT", 1)
+        a.logger.Info("Mapping symbol for Kraken", "original", apiPairSymbol, "kraken_pair", krakenPair)
     }
-    url := fmt.Sprintf("https://api.kraken.com/0/public/Ticker?pair=%s", krakenPair)
+    url := fmt.Sprintf("%s/Ticker?pair=%s", source.BaseURL, krakenPair)
     resp, err := a.client.Get(url)
     if err != nil {
         return nil, fmt.Errorf("kraken request failed: %w", err)
@@ -355,10 +344,20 @@ type krakenTickerInfo struct {
     Open      string   `json:"o"`
 }
 
-// fetchUniswapV3Price fetches price from Uniswap V3
-func (a *CryptoAggregator) fetchUniswapV3Price(endpoint, poolAddress string) (*common.PricePoint, error) {
-    a.logger.Info("Fetching price from Uniswap V3 subgraph", "endpoint", endpoint, "pool", poolAddress)
+// fetchTheGraphPoolPrice fetches price from a subgraph pool.
+// Needs poolAddress passed in.
+func (a *CryptoAggregator) fetchTheGraphPoolPrice(source *common.Source, poolAddress string) (*common.PricePoint, error) {
+    apiKey := os.Getenv("THE_GRAPH_API_KEY")
+    if apiKey == "" {
+        a.logger.Warn("THE_GRAPH_API_KEY environment variable not set. Subgraph queries might fail or be rate-limited.")
+        // Proceed without key for public access attempt
+    }
+    // Construct endpoint URL
+    endpoint := fmt.Sprintf("https://gateway-arbitrum.network.thegraph.com/api/%s/subgraphs/id/%s", apiKey, source.SubgraphID)
 
+    a.logger.Info("Fetching price from The Graph Pool", "source", source.Name, "pool", poolAddress, "subgraphId", source.SubgraphID)
+
+    // Query for the specific pool
     query := fmt.Sprintf(`{
         pool(id: "%s") {
             token0Price
@@ -374,42 +373,34 @@ func (a *CryptoAggregator) fetchUniswapV3Price(endpoint, poolAddress string) (*c
     }
     requestBodyBytes, err := json.Marshal(requestBody)
     if err != nil {
-        return nil, fmt.Errorf("failed to marshal uniswap graphql request body: %w", err)
+        return nil, fmt.Errorf("failed to marshal graphql request body for %s: %w", source.Name, err)
     }
 
     req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(requestBodyBytes))
     if err != nil {
-        return nil, fmt.Errorf("failed to create uniswap request: %w", err)
+        return nil, fmt.Errorf("failed to create graphql request for %s: %w", source.Name, err)
     }
     req.Header.Set("Content-Type", "application/json")
 
     resp, err := a.client.Do(req)
     if err != nil {
-        return nil, fmt.Errorf("uniswap subgraph request failed: %w", err)
+        return nil, fmt.Errorf("graphql request failed for %s: %w", source.Name, err)
     }
     defer resp.Body.Close()
 
     if resp.StatusCode != http.StatusOK {
         bodyBytes, _ := ioutil.ReadAll(resp.Body)
-        return nil, fmt.Errorf("uniswap subgraph API error: status %d, body: %s", resp.StatusCode, string(bodyBytes))
+        return nil, fmt.Errorf("graphql API error for %s: status %d, body: %s", source.Name, resp.StatusCode, string(bodyBytes))
     }
 
+    // --- Response parsing specific to POOL query --- 
     var response struct {
         Data struct {
             Pool *struct {
                 Token0Price string `json:"token0Price"`
                 Token1Price string `json:"token1Price"`
                 VolumeUSD   string `json:"volumeUSD"`
-                Token0      struct {
-                    ID       string `json:"id"`
-                    Symbol   string `json:"symbol"`
-                    Decimals string `json:"decimals"`
-                } `json:"token0"`
-                Token1      struct {
-                    ID       string `json:"id"`
-                    Symbol   string `json:"symbol"`
-                    Decimals string `json:"decimals"`
-                } `json:"token1"`
+                // ... token details ...
             } `json:"pool"`
         } `json:"data"`
         Errors []interface{} `json:"errors"`
@@ -417,69 +408,160 @@ func (a *CryptoAggregator) fetchUniswapV3Price(endpoint, poolAddress string) (*c
 
     body, err := ioutil.ReadAll(resp.Body)
     if err != nil {
-        return nil, fmt.Errorf("failed to read uniswap response body: %w", err)
+        return nil, fmt.Errorf("failed to read graphql response body for %s: %w", source.Name, err)
     }
-
     if err := json.Unmarshal(body, &response); err != nil {
-        return nil, fmt.Errorf("failed to unmarshal uniswap response: %w, body: %s", err, string(body))
+        return nil, fmt.Errorf("failed to unmarshal graphql response for %s: %w, body: %s", source.Name, err, string(body))
     }
-
     if len(response.Errors) > 0 {
-        return nil, fmt.Errorf("uniswap subgraph returned errors: %v", response.Errors)
+        return nil, fmt.Errorf("graphql query for %s returned errors: %v", source.Name, response.Errors)
     }
-
     if response.Data.Pool == nil {
-        return nil, fmt.Errorf("pool %s not found in uniswap subgraph response", poolAddress)
+        return nil, fmt.Errorf("pool %s not found in subgraph response for %s", poolAddress, source.Name)
     }
 
     poolData := response.Data.Pool
-
-    priceStr := poolData.Token1Price
-
+    // TODO: Determine price direction (token0 vs token1) based on pair config
+    priceStr := poolData.Token1Price // Needs proper logic
     price, err := parseFloat(priceStr)
     if err != nil {
-        return nil, fmt.Errorf("failed to parse uniswap price '%s': %w", priceStr, err)
+        return nil, fmt.Errorf("failed to parse price for %s pool %s: %w", source.Name, poolAddress, err)
     }
-
     volume, err := parseFloat(poolData.VolumeUSD)
     if err != nil {
-        a.logger.Warn("Failed to parse uniswap volumeUSD, setting to 0", "volume_str", poolData.VolumeUSD, "error", err)
+        a.logger.Warn("Failed to parse volumeUSD", "source", source.Name, "pool", poolAddress, "error", err)
         volume = 0
     }
 
     return &common.PricePoint{
-        Source:    fmt.Sprintf("uniswap_v3:%s", poolAddress),
+        Source:    fmt.Sprintf("%s:%s", source.Name, poolAddress),
         Price:     price,
         Volume:    volume,
         Timestamp: time.Now().UTC(),
     }, nil
 }
 
-// calculateAggregatePrice performs robust price aggregation:
-// 1. Filters stale prices.
-// 2. Performs outlier rejection using IQR.
-// 3. Calculates the weighted median price.
-// 4. Calculates aggregate volume.
-func (a *CryptoAggregator) calculateAggregatePrice(prices []*common.PricePoint, config *common.PairConfig) (*common.PricePoint, error) {
-    if len(prices) == 0 {
-        return nil, fmt.Errorf("no prices provided for aggregation")
+// fetchTheGraphBundleEthPrice fetches the global ETH price from The Graph bundle entity.
+func (a *CryptoAggregator) fetchTheGraphBundleEthPrice(source *common.Source) (*common.PricePoint, error) {
+    apiKey := os.Getenv("THE_GRAPH_API_KEY")
+    if apiKey == "" {
+        a.logger.Warn("THE_GRAPH_API_KEY environment variable not set. Subgraph queries might fail or be rate-limited.")
+    }
+    endpoint := fmt.Sprintf("https://gateway-arbitrum.network.thegraph.com/api/%s/subgraphs/id/%s", apiKey, source.SubgraphID)
+
+    a.logger.Info("Fetching ETH price from The Graph Bundle", "source", source.Name, "subgraphId", source.SubgraphID)
+
+    // Fixed query for bundle ETH price
+    query := `{
+        bundles(first: 1) { id ethPriceUSD }
+    }`
+
+    requestBody := map[string]string{
+        "query": query,
+    }
+    requestBodyBytes, err := json.Marshal(requestBody)
+    if err != nil {
+        return nil, fmt.Errorf("failed to marshal graphql request body for %s bundle: %w", source.Name, err)
+    }
+
+    req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(requestBodyBytes))
+    if err != nil {
+        return nil, fmt.Errorf("failed to create graphql request for %s bundle: %w", source.Name, err)
+    }
+    req.Header.Set("Content-Type", "application/json")
+
+    resp, err := a.client.Do(req)
+    if err != nil {
+        return nil, fmt.Errorf("graphql bundle request failed for %s: %w", source.Name, err)
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode != http.StatusOK {
+        bodyBytes, _ := ioutil.ReadAll(resp.Body)
+        return nil, fmt.Errorf("graphql bundle API error for %s: status %d, body: %s", source.Name, resp.StatusCode, string(bodyBytes))
+    }
+
+    // --- Response parsing specific to BUNDLE query --- 
+    var response struct {
+        Data struct {
+            Bundles []struct {
+                EthPriceUSD string `json:"ethPriceUSD"`
+            } `json:"bundles"`
+        } `json:"data"`
+        Errors []interface{} `json:"errors"`
+    }
+
+    body, err := ioutil.ReadAll(resp.Body)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read graphql bundle response body for %s: %w", source.Name, err)
+    }
+    if err := json.Unmarshal(body, &response); err != nil {
+        return nil, fmt.Errorf("failed to unmarshal graphql bundle response for %s: %w, body: %s", source.Name, err, string(body))
+    }
+    if len(response.Errors) > 0 {
+        return nil, fmt.Errorf("graphql bundle query for %s returned errors: %v", source.Name, response.Errors)
+    }
+    if len(response.Data.Bundles) == 0 {
+        return nil, fmt.Errorf("no bundles found in subgraph response for %s", source.Name)
+    }
+
+    priceStr := response.Data.Bundles[0].EthPriceUSD
+    price, err := parseFloat(priceStr)
+    if err != nil {
+        return nil, fmt.Errorf("failed to parse ethPriceUSD for %s: %w", source.Name, err)
+    }
+
+    return &common.PricePoint{
+        Source:    source.Name, // Use the configured source name
+        Price:     price,
+        Volume:    0, // Bundle query doesn't provide relevant volume for the pair
+        Timestamp: time.Now().UTC(),
+    }, nil
+}
+
+// --- End Fetcher Functions ---
+
+// calculateAggregatePrice performs robust price aggregation and caches details.
+// Accepts AggregationParams directly.
+func (a *CryptoAggregator) calculateAggregatePrice(prices []*common.PricePoint, params *common.AggregationParams, pairID string) (*common.PricePoint, error) {
+    if len(prices) == 0 || params == nil {
+        return nil, fmt.Errorf("invalid arguments for aggregation")
+    }
+
+    // Create a new slice for processing and caching with status
+    processedPrices := make([]*common.PricePoint, len(prices))
+    for i, p := range prices {
+        // Shallow copy is okay here as we only add Status
+        processedPrices[i] = &common.PricePoint{
+            Source:    p.Source,
+            Price:     p.Price,
+            Volume:    p.Volume,
+            Timestamp: p.Timestamp,
+            Weight:    p.Weight,
+            Status:    "unknown", // Default status
+        }
     }
 
     // 1. Filter stale prices
     now := time.Now().UTC()
-    // Use MaxPriceAgeSeconds from config and convert to Duration
-    maxAge := time.Duration(config.MaxPriceAgeSeconds) * time.Second
-    validPrices := make([]*common.PricePoint, 0, len(prices))
-    for _, p := range prices {
+    maxAge := time.Duration(params.MaxPriceAgeSeconds) * time.Second
+    validPrices := make([]*common.PricePoint, 0, len(processedPrices))
+    for _, p := range processedPrices {
         if now.Sub(p.Timestamp) <= maxAge {
+            p.Status = "pending_validation" // Mark as pending further checks
             validPrices = append(validPrices, p)
         } else {
+            p.Status = "stale" // Mark as stale
             a.logger.Warn("Discarding stale price", "source", p.Source, "timestamp", p.Timestamp, "max_age", maxAge)
         }
     }
 
-    if len(validPrices) < config.MinimumSources {
-        return nil, fmt.Errorf("insufficient non-stale price sources: got %d, need %d", len(validPrices), config.MinimumSources)
+    if len(validPrices) < params.MinimumSources {
+        // Cache the results even if aggregation fails due to insufficient sources
+        a.cacheMutex.Lock()
+        a.sourceDetailCache[pairID] = processedPrices
+        a.cacheMutex.Unlock()
+        return nil, fmt.Errorf("insufficient non-stale price sources: got %d, need %d", len(validPrices), params.MinimumSources)
     }
 
     // 2. Outlier Rejection using IQR
@@ -490,39 +572,52 @@ func (a *CryptoAggregator) calculateAggregatePrice(prices []*common.PricePoint, 
     q1Index := len(validPrices) / 4
     q3Index := (len(validPrices) * 3) / 4
 
-    // Handle cases with few data points where Q1/Q3 might be less meaningful
-    // We need at least 4 points for distinct Q1 and Q3 indices.
-    // If fewer than 4, skip IQR filtering for now? Or use a different method?
-    // For simplicity, let's proceed, but be aware this might not be robust for < 4 prices.
     if len(validPrices) < 4 {
         a.logger.Info("Skipping IQR outlier detection, too few data points", "count", len(validPrices))
+        // Mark all remaining as valid
+        for _, p := range validPrices {
+            if p.Status == "pending_validation" { // Only update those that passed staleness
+                p.Status = "valid"
+            }
+        }
     } else {
         q1 := validPrices[q1Index].Price
         q3 := validPrices[q3Index].Price
         iqr := q3 - q1
-        // Use IQRMultiplier from config
-        k := config.IQRMultiplier // This usage should now be correct
+        k := params.IQRMultiplier
         lowerBound := q1 - k*iqr
         upperBound := q3 + k*iqr
 
         filteredPrices := make([]*common.PricePoint, 0, len(validPrices))
         for _, p := range validPrices {
             if p.Price >= lowerBound && p.Price <= upperBound {
+                p.Status = "valid" // Mark as valid
                 filteredPrices = append(filteredPrices, p)
             } else {
+                p.Status = "outlier" // Mark as outlier
                 a.logger.Warn("Discarding outlier price (IQR)",
-                    "source", p.Source,
-                    "price", p.Price,
-                    "q1", q1, "q3", q3, "iqr", iqr,
-                    "lower_bound", lowerBound, "upper_bound", upperBound)
+                    "source", p.Source, "price", p.Price, "lower_bound", lowerBound, "upper_bound", upperBound)
             }
         }
-        validPrices = filteredPrices // Update validPrices to the filtered list
+        validPrices = filteredPrices // Update validPrices to the list that passed IQR
     }
 
+    // Ensure any price point still marked as pending_validation is now valid
+    // (This handles the case where IQR was skipped but staleness check passed)
+    for _, p := range processedPrices {
+        if p.Status == "pending_validation" {
+            p.Status = "valid"
+        }
+    }
+
+    // Cache the results WITH status BEFORE final checks/calculation
+    a.cacheMutex.Lock()
+    a.sourceDetailCache[pairID] = processedPrices // Cache the full list with statuses
+    a.cacheMutex.Unlock()
+
     // 3. Check minimum sources *after* outlier rejection
-    if len(validPrices) < config.MinimumSources {
-        return nil, fmt.Errorf("insufficient non-outlier price sources: got %d, need %d", len(validPrices), config.MinimumSources)
+    if len(validPrices) < params.MinimumSources {
+        return nil, fmt.Errorf("insufficient non-outlier price sources: got %d, need %d", len(validPrices), params.MinimumSources)
     }
 
     // 4. Calculate Weighted Median (Volume-Enhanced)
@@ -624,12 +719,12 @@ func (a *CryptoAggregator) calculateAggregatePrice(prices []*common.PricePoint, 
         return nil, fmt.Errorf("failed to determine volume-enhanced weighted median price point")
     }
 
-    // 5. Aggregate Volume (sum of volumes from the final valid set - calculated earlier)
+    // 5. Aggregate Volume (sum of volumes from the final valid set)
     aggregateVolume := totalVolume // We already calculated this
 
     // 6. Return aggregated result
     return &common.PricePoint{
-        Source:    "aggregated_vol_weighted_median", // Indicate aggregation method
+        Source:    "aggregated_vol_weighted_median",
         Price:     weightedMedianPricePoint.Price,
         Volume:    aggregateVolume,
         Timestamp: weightedMedianPricePoint.Timestamp,
@@ -645,4 +740,20 @@ func parseFloat(s string) (float64, error) {
     return val, nil
 }
 
-// The actual GetPairConfig function is expected to be in the config.go file within this package.
+// GetLastAggregationDetails retrieves the cached source details for a pair ID.
+func (a *CryptoAggregator) GetLastAggregationDetails(pairID string) ([]*common.PricePoint, error) {
+    a.cacheMutex.RLock()
+    defer a.cacheMutex.RUnlock()
+    details, ok := a.sourceDetailCache[pairID]
+    if !ok {
+        return nil, fmt.Errorf("no aggregation details found for pair %s", pairID)
+    }
+    // Return a deep copy to prevent caller from modifying the cache accidentally
+    detailsCopy := make([]*common.PricePoint, len(details))
+    for i, p := range details {
+        // Create a new PricePoint for the copy
+        copyPoint := *p
+        detailsCopy[i] = &copyPoint
+    }
+    return detailsCopy, nil
+}

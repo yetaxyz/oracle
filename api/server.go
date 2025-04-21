@@ -6,11 +6,13 @@ import (
 	"log"
 	"net/http"
 	"os"
-	// "path/filepath" // Removed unused import
+	// "path/filepath" // Not needed anymore
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/joho/godotenv"
 	"github.com/rs/cors"
 	"yetaXYZ/oracle/common"
 	"yetaXYZ/oracle/sources/crypto"
@@ -36,37 +38,36 @@ func writeJsonError(w http.ResponseWriter, statusCode int, errCode string, messa
 	json.NewEncoder(w).Encode(map[string]ApiError{"error": {Code: errCode, Message: message}})
 }
 
-// Regex for basic symbol validation (e.g., 3-12 uppercase letters)
-var symbolRegex = regexp.MustCompile(`^[A-Z]{3,12}$`)
+// Regex for basic symbol validation (e.g., BASE_QUOTE like ETH_USDC)
+// Updated to allow underscore, adjust if pair ID format differs
+var symbolRegex = regexp.MustCompile(`^[A-Z]{2,8}[-_][A-Z]{2,8}$`)
+var chainRegex = regexp.MustCompile(`^[a-z0-9_-]{2,20}$`) // Basic chain ID validation
 
 // Server represents the API server
 type Server struct {
 	router     *mux.Router
 	aggregator *crypto.CryptoAggregator
-	config     *common.BaseConfig
+	// config     *common.BaseConfig // Removed old config
+	loadedConfig *common.LoadedConfig // Holds all loaded configs
 }
 
 // NewServer creates a new API server
 func NewServer() (*Server, error) {
-	// Load configuration (relative to workspace root where command is run)
-	// configDir := filepath.Join("..", "config") // Old path relative to api/
-	configDir := "config" // Path relative to workspace root
-	if err := crypto.LoadConfig(configDir); err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
+	// Load configuration files
+	configDir := "config"
+	cfg, err := crypto.LoadAllConfigs(configDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
+	log.Println("Configuration loaded and validated successfully.")
 
-	// Validate configuration
-	if err := crypto.ValidateConfig(); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %w", err)
-	}
-
-	// Create aggregator
-	aggregator := crypto.NewCryptoAggregator(crypto.BaseConfig)
+	// Create aggregator (no longer takes config directly)
+	aggregator := crypto.NewCryptoAggregator()
 
 	server := &Server{
-		router:     mux.NewRouter(),
-		aggregator: aggregator,
-		config:     crypto.BaseConfig,
+		router:       mux.NewRouter(),
+		aggregator:   aggregator,
+		loadedConfig: cfg, // Store loaded config
 	}
 
 	server.routes()
@@ -75,52 +76,119 @@ func NewServer() (*Server, error) {
 
 // routes sets up the API routes
 func (s *Server) routes() {
-	s.router.HandleFunc("/api/v1/prices/{symbol}", s.handleGetPrice()).Methods("GET")
+	// Updated route - symbol might include underscore (e.g., ETH_USDC)
+	s.router.HandleFunc("/api/v1/prices/{symbol}", s.handleGetPrice()).Methods("GET") // Chain via query param
+	s.router.HandleFunc("/api/v1/prices/{symbol}/sources", s.handleGetSourceDetails()).Methods("GET") // Chain via query param
 	s.router.HandleFunc("/api/v1/health", s.handleHealth()).Methods("GET")
+	// TODO: Add endpoint to list available feeds (/api/v1/feeds)
 }
 
 // handleGetPrice handles price requests
 func (s *Server) handleGetPrice() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
-		symbol := vars["symbol"]
+		symbol := strings.ToUpper(vars["symbol"]) // Ensure uppercase
+		chainID := strings.ToLower(r.URL.Query().Get("chain")) // Get chain from query, lowercase
+		if chainID == "" {
+			chainID = "global" // Default to global feed
+		}
 
 		// --- Input Validation ---
 		if !symbolRegex.MatchString(symbol) {
 			writeJsonError(w, http.StatusBadRequest, ErrCodeInvalidSymbol,
-				fmt.Sprintf("Invalid symbol format: '%s'. Expected 3-12 uppercase letters.", symbol))
+				fmt.Sprintf("Invalid symbol format: '%s'. Expected format like BASE_QUOTE.", symbol))
 			return
 		}
-		// TODO: Add validation against actual list of supported symbols from config
+		if !chainRegex.MatchString(chainID) {
+			writeJsonError(w, http.StatusBadRequest, "INVALID_CHAIN_ID",
+				fmt.Sprintf("Invalid chain ID format: '%s'.", chainID))
+			return
+		}
 
-		// Fetch price using the validated symbol
-		price, err := s.aggregator.FetchPrice(symbol)
+		// Construct the Pair ID used in config (e.g., ETHUSDC_Global, SOLUSDC_Solana)
+		// Assumes format SYMBOL_ChainID (needs to match keys in pairs.json)
+		// Need to handle the symbol format correctly (e.g. ETH_USDC vs ETHUSDC)
+		// Let's assume keys in pairs.json are like ETHUSDC_Global
+		pairSymbolOnly := strings.ReplaceAll(symbol, "_", "") // Get symbol part like ETHUSDC
+		pairID := pairSymbolOnly + "_" + strings.Title(chainID) // Construct ID like ETHUSDC_Global or ETHUSDC_Solana
+
+		// Get the resolved configuration for this specific pair feed
+		resolvedConfig, err := crypto.GetResolvedPairConfig(s.loadedConfig, pairID)
 		if err != nil {
-			log.Printf("Error fetching price for %s: %v", symbol, err)
-			// Use standardized JSON error response
-			writeJsonError(w, http.StatusInternalServerError, ErrCodePriceFetchFailed,
-				fmt.Sprintf("Failed to fetch price for symbol '%s'.", symbol))
-			// Note: Exposing internal error details (err.Error()) is generally discouraged in production.
+			log.Printf("Error resolving config for pair %s: %v", pairID, err)
+			writeJsonError(w, http.StatusNotFound, "PAIR_NOT_CONFIGURED",
+				fmt.Sprintf("Price feed not configured for '%s' on chain '%s'.", symbol, chainID))
 			return
 		}
 
-		if price == nil { // Defensive check in case FetchPrice returns nil without error
-			log.Printf("FetchPrice returned nil price for %s without error", symbol)
-			writeJsonError(w, http.StatusInternalServerError, ErrCodeInternalError, "Received nil price internally.")
+		// Fetch price using the resolved config
+		price, err := s.aggregator.FetchPrice(resolvedConfig)
+		if err != nil {
+			// Error already logged in aggregator FetchPrice
+			writeJsonError(w, http.StatusInternalServerError, ErrCodePriceFetchFailed,
+				fmt.Sprintf("Failed to fetch aggregated price for '%s' on chain '%s'.", symbol, chainID))
+			return
+		}
+
+		if price == nil { // Should not happen if FetchPrice returns nil error
+			log.Printf("Aggregator returned nil price for %s without error", pairID)
+			writeJsonError(w, http.StatusInternalServerError, ErrCodeInternalError, "Internal error retrieving price.")
 			return
 		}
 
 		// Return successful response
 		response := map[string]interface{}{
-			"symbol":    symbol,
+			"feedID":    pairID,
+			"symbol":    symbol, // Original requested symbol
+			"chain":     chainID,
 			"price":     price.Price,
-			"volume":    price.Volume,       // Include volume from aggregation
-			"source":    price.Source,       // Include source info (e.g., "aggregated_vol_weighted_median")
-			"timestamp": price.Timestamp.UTC().Format(time.RFC3339Nano), // Use standard ISO 8601 format
+			"volume":    price.Volume,
+			"source":    price.Source, // Aggregation method/status
+			"timestamp": price.Timestamp.UTC().Format(time.RFC3339Nano),
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
+	}
+}
+
+// handleGetSourceDetails handles requests for pre-aggregation source data
+func (s *Server) handleGetSourceDetails() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		symbol := strings.ToUpper(vars["symbol"])
+		chainID := strings.ToLower(r.URL.Query().Get("chain"))
+		if chainID == "" {
+			chainID = "global"
+		}
+
+		// Basic validation
+		if !symbolRegex.MatchString(symbol) {
+			writeJsonError(w, http.StatusBadRequest, ErrCodeInvalidSymbol, fmt.Sprintf("Invalid symbol format: '%s'.", symbol))
+			return
+		}
+		if !chainRegex.MatchString(chainID) {
+			writeJsonError(w, http.StatusBadRequest, "INVALID_CHAIN_ID", fmt.Sprintf("Invalid chain ID format: '%s'.", chainID))
+			return
+		}
+
+		// Construct Pair ID
+		pairSymbolOnly := strings.ReplaceAll(symbol, "_", "")
+		pairID := pairSymbolOnly + "_" + strings.Title(chainID)
+
+		details, err := s.aggregator.GetLastAggregationDetails(pairID) // Use PairID as key
+		if err != nil {
+			// Error already logged in aggregator if needed
+			if strings.Contains(err.Error(), "not found") {
+				writeJsonError(w, http.StatusNotFound, "NO_DETAILS_FOUND", fmt.Sprintf("No source details available for feed '%s'. Aggregate first?", pairID))
+			} else {
+				writeJsonError(w, http.StatusInternalServerError, ErrCodeInternalError, "Failed to retrieve source details.")
+			}
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(details)
 	}
 }
 
@@ -138,6 +206,12 @@ func (s *Server) handleHealth() http.HandlerFunc {
 }
 
 func main() {
+	// Load .env file. Ignore error if file doesn't exist.
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("Info: Error loading .env file, relying on system environment variables:", err)
+	}
+
 	server, err := NewServer()
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)

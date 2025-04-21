@@ -1,0 +1,30 @@
+{
+  "ethereum": {
+    "id": "1",
+    "name": "Ethereum",
+    "nativeCurrency": "ETH",
+    "rpcEndpoints": [
+      "https://eth.llamarpc.com",
+      "https://mainnet.infura.io/v3/YOUR_INFURA_KEY"
+    ],
+    "blockExplorerUrls": ["https://etherscan.io"]
+  },
+  "solana": {
+    "id": "solana-mainnet",
+    "name": "Solana",
+    "nativeCurrency": "SOL",
+    "rpcEndpoints": [
+      "https://api.mainnet-beta.solana.com"
+    ],
+    "blockExplorerUrls": ["https://explorer.solana.com"]
+  },
+  "base": {
+    "id": "8453",
+    "name": "Base",
+    "nativeCurrency": "ETH",
+    "rpcEndpoints": [
+      "https://mainnet.base.org"
+    ],
+    "blockExplorerUrls": ["https://basescan.org"]
+  }
+} 

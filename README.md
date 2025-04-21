@@ -315,7 +315,7 @@ Ready to run the oracle? Follow these steps:
 3.  **Clone the Repository:**
     *   **Why?** To get a copy of the project code onto your local machine.
     *   **How?** Open your terminal, navigate to where you want to store the project, and run:
-        ```bash
+   ```bash
         git clone <repository_url> # Replace <repository_url> with the actual URL
         cd <repository_directory> # Navigate into the newly cloned project folder
         ```
@@ -350,7 +350,7 @@ Ready to run the oracle? Follow these steps:
 6.  **Install Frontend Dependencies (Optional):**
     *   **Why?** If you want to run the web dashboard, you need to install its Node.js library dependencies.
     *   **How?** Navigate to the dashboard directory and use `npm`:
-        ```bash
+   ```bash
         cd web/dashboard
         npm install
         cd ../.. # Go back to the project root directory
@@ -371,10 +371,10 @@ Ready to run the oracle? Follow these steps:
 9.  **Run the Dashboard (Optional):**
     *   **Why?** To visually monitor the prices served by the API.
     *   **How?** Open a *new* terminal window, navigate to the dashboard directory, and run:
-        ```bash
-        cd web/dashboard
-        npm start
-        ```
+   ```bash
+   cd web/dashboard
+   npm start
+   ```
         This usually opens the dashboard in your web browser automatically (often at `http://localhost:3000`).
 
 You should now have the oracle backend running and potentially the frontend dashboard displaying prices fetched from the backend API!

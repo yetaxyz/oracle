@@ -1,0 +1,37 @@
+{
+  "binance_cex": {
+    "name": "Binance CEX",
+    "type": "cex",
+    "baseUrl": "https://api.binance.com/api/v3"
+  },
+  "coinbase_cex": {
+    "name": "Coinbase CEX",
+    "type": "cex",
+    "baseUrl": "https://api.coinbase.com/v2"
+  },
+  "kraken_cex": {
+    "name": "Kraken CEX",
+    "type": "cex",
+    "baseUrl": "https://api.kraken.com/0/public"
+  },
+  "the_graph_eth_bundle": {
+    "name": "ETH Bundle Price via Uniswap V3 Context (Mainnet)",
+    "type": "dex_subgraph",
+    "chainId": "ethereum",
+    "subgraphId": "5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
+    "queryMethod": "bundleEthPrice"
+  },
+  "uniswap_v3_eth_pool": {
+    "name": "Uniswap V3 Pool (Ethereum)",
+    "type": "dex_subgraph",
+    "chainId": "ethereum",
+    "subgraphId": "5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
+    "queryMethod": "poolPrice" 
+  },
+  "raydium_solana": {
+     "name": "Raydium (Solana)",
+     "type": "dex_rpc",
+     "chainId": "solana",
+     "programId": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
+  }
+}
